@@ -3,24 +3,27 @@
  *
  * SPDX-License-Identifier: CC0-1.0
  */
-
+#include "gpio_JRL/gpio.h"
+#include "gpio_JRL/gpio.c"
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
+#include "freertos/FreeRTOSConfig.h"
 #include "esp_timer.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "driver/i2c.h"
+#include "driver/adc.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_SH1107
-#include "esp_lcd_sh1107.h"
-#else
+
 #include "esp_lcd_panel_vendor.h"
-#endif
+
 
 static const char *TAG = "example";
 
@@ -36,16 +39,17 @@ static const char *TAG = "example";
 #define EXAMPLE_I2C_HW_ADDR           0x3C
 
 // The pixel number in horizontal and vertical
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_SSD1306
+
 #define EXAMPLE_LCD_H_RES              128
 #define EXAMPLE_LCD_V_RES              64
-#elif CONFIG_EXAMPLE_LCD_CONTROLLER_SH1107
-#define EXAMPLE_LCD_H_RES              64
-#define EXAMPLE_LCD_V_RES              128
-#endif
+
 // Bit number used to represent command and parameter
 #define EXAMPLE_LCD_CMD_BITS           8
 #define EXAMPLE_LCD_PARAM_BITS         8
+//macros propias de JRL para aplicación
+#define RED PIN14
+#define GREEN PIN13
+#define BLUE PIN12
 
 extern void example_lvgl_demo_ui(lv_disp_t *disp, float);
 
@@ -60,7 +64,7 @@ static bool notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_
 }
 
 void app_main(void)
-{
+{ /*configurar i2c*/
     ESP_LOGI(TAG, "Initialize I2C bus");
     i2c_config_t i2c_conf = {
         .mode = I2C_MODE_MASTER,
@@ -80,16 +84,10 @@ void app_main(void)
         .control_phase_bytes = 1,               // According to SSD1306 datasheet
         .lcd_cmd_bits = EXAMPLE_LCD_CMD_BITS,   // According to SSD1306 datasheet
         .lcd_param_bits = EXAMPLE_LCD_CMD_BITS, // According to SSD1306 datasheet
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_SSD1306
         .dc_bit_offset = 6,                     // According to SSD1306 datasheet
-#elif CONFIG_EXAMPLE_LCD_CONTROLLER_SH1107
-        .dc_bit_offset = 0,                     // According to SH1107 datasheet
-        .flags =
-        {
-            .disable_control_phase = 1,
-        }
-#endif
+
     };
+    /*configure pantalla*/
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)I2C_HOST, &io_config, &io_handle));
 
     ESP_LOGI(TAG, "Install SSD1306 panel driver");
@@ -98,19 +96,14 @@ void app_main(void)
         .bits_per_pixel = 1,
         .reset_gpio_num = EXAMPLE_PIN_NUM_RST,
     };
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_SSD1306
+
     ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(io_handle, &panel_config, &panel_handle));
-#elif CONFIG_EXAMPLE_LCD_CONTROLLER_SH1107
-    ESP_ERROR_CHECK(esp_lcd_new_panel_sh1107(io_handle, &panel_config, &panel_handle));
-#endif
+
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-#if CONFIG_EXAMPLE_LCD_CONTROLLER_SH1107
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
-#endif
 
     ESP_LOGI(TAG, "Initialize LVGL");
     const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
@@ -139,7 +132,65 @@ void app_main(void)
 
     /* Rotation of the screen */
     lv_disp_set_rotation(disp, LV_DISP_ROT_NONE);
+/*configuracion de pines con driver de JRL*/
+//  Definir el número de pin GPIO que deseas configurar
+    uint8_t pinout = PIN4;  // Por ejemplo, configurando el pin GPIO5
+    uint8_t pinON = PIN18;   //SW1
+    uint8_t pinOFF = PIN19;  //SW2
+    gpio_pinMode(pinout, OUTPUT);
+    gpio_pinMode(RED, OUTPUT);
+    gpio_pinMode(GREEN, OUTPUT);
+    gpio_pinMode(BLUE, OUTPUT);
+    gpio_pinMode(pinON, INPUT_PULLUP);
+    gpio_pinMode(pinOFF, INPUT_PULLUP);
+    gpio_write(RED, HIGH);
+    gpio_write(GREEN, HIGH);
+    gpio_write(BLUE, HIGH);
 
+
+    /*configuración de adc y declaración de variables para la temperatura*/
+    float tv, tr, y, temp;
+    int adc_read = 0;
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc_read = adc1_get_raw(ADC1_CHANNEL_0);
     ESP_LOGI(TAG, "Display LVGL Scroll Text");
-    example_lvgl_demo_ui(disp, 27.10);
+
+    //example_lvgl_demo_ui(disp, 0);
+
+    while(1){
+
+         if(gpio_read(pinON) == 0X00){
+         gpio_write(pinout, HIGH);
+         gpio_write(RED, LOW);
+         vTaskDelay(1000/ (( TickType_t ) 1000 / 100));
+         gpio_write(RED, HIGH);
+         gpio_write(GREEN, LOW);
+         vTaskDelay(1000/ (( TickType_t ) 1000 / 100));
+         gpio_write(GREEN, HIGH);
+         gpio_write(BLUE, LOW);
+         vTaskDelay(1000/ (( TickType_t ) 1000 / 100));
+         gpio_write(BLUE, HIGH);
+         printf("HIGH\n");
+        
+        } 
+        if(gpio_read(pinOFF) == 0X00){
+          gpio_write(pinout, LOW);
+          gpio_write(RED, HIGH);
+          gpio_write(GREEN, HIGH);
+          gpio_write(BLUE, HIGH);
+        //vTaskDelay(1000/ (( TickType_t ) 1000 / 100));
+        }
+        tv = 3.3 * adc_read / 4095.0;
+        tr = tv * 10000.0 / (3.3 - tv);
+        y = log(tr/10000.0);
+        y = (1.0/298.15) + (y *(1.0/4050.0));
+        temp = 1.0/y;
+        temp = temp -273.15;
+        esp_lcd_panel_reset(panel_handle);
+        example_lvgl_demo_ui(disp, temp);
+        vTaskDelay(100/ (( TickType_t ) 1000 / 100));
+    }
+
+    
 }
